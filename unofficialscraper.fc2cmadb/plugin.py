@@ -604,9 +604,17 @@ class Fc2CmDbProvider(FilmSourceProvider):  # type: ignore[misc]
                 text = await self._http.get_html(
                     url, headers=self._headers(), cookies=self._cookie_dict())
             except SourceError as exc:  # type: ignore[misc]
-                if getattr(exc, "http_status", None) == 429:
+                status = getattr(exc, "http_status", None)
+                if status == 429:
                     raise SourceError(FailureReason.RATE_LIMITED,  # type: ignore[misc]
                                       detail=f"{url}: HTTP 429 限流", url=url)
+                # fc2cmadb 会把「登录才能看」的视频对匿名/无会话客户端伪装成 404
+                # （真实站点里 4302474 这类番号在已登录浏览器可见，匿名却 404）。
+                # 所以撞到 404 不能直接判 not_found，先回落已登录浏览器看真伪；
+                # 浏览器也拿不到 article 时，才由它/上层报未收录。
+                if status == 404 and allow_retry:
+                    self._log("HTTP 404 → 可能是登录隐藏条目，回落浏览器兜底")
+                    return await self._browser_fetch_article(url)
                 raise
             if self._is_login_wall(text):
                 self._dump("loginwall.html", text)
