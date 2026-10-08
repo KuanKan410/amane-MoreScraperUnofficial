@@ -153,6 +153,26 @@ def _article(html: str) -> dict | None:
     art = props.get("article")
     return art if isinstance(art, dict) else None
 
+
+def _logged_in(html: str) -> bool | None:
+    """从 data-page 里读登录态。
+
+    - True：`props.auth.user` 为真（已登录）
+    - False：`props.auth.user` 为 null（未登录，典型登录墙页）
+    - None：页面连 data-page 都没有（纯 404 / 非 Inertia 页），无法就地判定。
+    """
+    dp = _data_page(html)
+    if not isinstance(dp, dict):
+        return None
+    props = dp.get("props")
+    if not isinstance(props, dict):
+        return None
+    auth = props.get("auth")
+    if not isinstance(auth, dict):
+        return None
+    user = auth.get("user")
+    return bool(user)
+
 # --------------------------------------------------------------------------
 # 小工具
 # --------------------------------------------------------------------------
@@ -181,6 +201,40 @@ def _digits(number: str) -> str | None:
 def _detail_url(digits: str, base: str = BASE_URL) -> str:
     """FC2 数字 → 详情页。本站 video_id 就是番号数字。"""
     return f"{base.rstrip('/')}/articles/{digits}"
+
+
+def _root_auth_url(url: str) -> str:
+    """从详情 URL 推导站根（用来读取始终携带 `auth.user` 的登录态页）。
+
+    详情页可能是纯 404、读不到 data-page 时，跳到根路径读共享 props 里的登录态。
+    """
+    base = url.rsplit("/articles/", 1)[0] if "/articles/" in url else BASE_URL
+    return base.rstrip("/") + "/"
+
+
+def _urllib_get_text(url: str, *, cookies: dict | None = None,
+                     headers: dict | None = None, timeout: float = 30.0) -> str:
+    """自给自足的 urllib GET，绕开 amane 的 WebClient。
+
+    amane 的 WebClient（curl_cffi 的 TLS 指纹）会被 fc2cmadb 误判成年龄验证，请求前就抛
+    AGE_VERIFICATION，导致公开条目（4867210 这类本可快路径拿到的）也进不去。urllib 用
+    系统 TLS（不伪装指纹）能稳定拿到本站正文，故 amane WebClient 误判时回退到这里。
+    """
+    import urllib.request as _ureq
+    import urllib.error as _uerr
+    h = dict(headers or {})
+    if cookies:
+        h["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items())
+    req = _ureq.Request(url, headers=h)
+    try:
+        with _ureq.urlopen(req, timeout=timeout) as resp:
+            return resp.read().decode("utf-8", "ignore")
+    except _uerr.HTTPError as e:
+        raise SourceError(FailureReason.HTTP_ERROR, http_status=e.code,  # type: ignore[misc]
+                          detail=url, url=url)
+    except Exception as e:
+        raise SourceError(FailureReason.NETWORK,  # type: ignore[misc]
+                          detail=f"{url}: {type(e).__name__}: {e}", url=url)
 
 # --------------------------------------------------------------------------
 # 类型占位
@@ -242,7 +296,12 @@ def _is_bad_image(url: str) -> bool:
 
 
 def _norm_duration(value) -> int | None:
-    """'01:45:04' → 105；'00:50' → 50；'90' → 90；非法/None → None。amane 要分钟。"""
+    """'01:45:04' → 105；'28:44' → 28；'00:50' → 1；'90' → 90；非法/None → None。
+
+    amane 要分钟。本站两段时长是 **分:秒（MM:SS）** 而非 H:MM——FC2 影片不可能 28 小时，
+    旧逻辑把 '28:44' 当成 28 小时 44 分算出 1724 分钟是错的。秒段向上凑整到分，'00:xx'
+    这类纯秒数也至少记 1 分，避免 runtime=0。
+    """
     if isinstance(value, int):
         return value if value > 0 else None
     if not isinstance(value, str):
@@ -253,9 +312,12 @@ def _norm_duration(value) -> int | None:
         if len(parts) == 3:                      # H:MM:SS
             h, m, s = (int(x) for x in parts)
             return h * 60 + m if h >= 0 and 0 <= m < 60 else None
-        if len(parts) == 2:                      # H:MM 或 MM:SS
-            h, m = (int(x) for x in parts)
-            return h * 60 + m if h >= 0 and 0 <= m < 60 else None
+        if len(parts) == 2:                      # MM:SS
+            m, s = (int(x) for x in parts)
+            if m < 0 or not (0 <= s < 60):
+                return None
+            mins = m if m > 0 else (1 if s > 0 else 0)  # 取分；纯秒数也至少记 1 分
+            return mins if mins > 0 else None
         if text.isdigit():                       # 纯分钟
             return int(text) if int(text) > 0 else None
     except Exception:  # noqa: BLE001
@@ -519,6 +581,24 @@ class Fc2CmDbProvider(FilmSourceProvider):  # type: ignore[misc]
         """持久化浏览器 profile 目录：登录态（cookie/登录记录）跨重启保留。"""
         return self._data_dir / "browser-profile"
 
+    async def _get_html(self, url: str) -> str:
+        """取详情页正文。优先 amane WebClient；若它把 fc2cmadb 误判成年龄验证
+        （AGE_VERIFICATION），回退自带的 urllib 直连（已证明可拿到公开条目的正文）。
+
+        404 / 429 / 网络错误照常抛 SourceError（带 http_status），由调用方决定回退
+        浏览器/报限流，不吞不改。
+        """
+        try:
+            return await self._http.get_html(
+                url, headers=self._headers(), cookies=self._cookie_dict())
+        except SourceError as exc:  # type: ignore[misc]
+            reason = getattr(exc, "reason", None)
+            if reason != FailureReason.AGE_VERIFICATION:
+                raise
+            self._log(f"amane WebClient 把 fc2cmadb 误判为年龄验证（{exc}）→ 回退 urllib 直连")
+            return _urllib_get_text(url, cookies=self._cookie_dict(),
+                                    headers=self._headers())
+
     async def _try_reuse(self, url: str, cached: dict[str, Any]) -> dict | None:
         """等锁期间别人已把会话回填进进程缓存：用它的 cookie 再取一次正文。
 
@@ -529,8 +609,7 @@ class Fc2CmDbProvider(FilmSourceProvider):  # type: ignore[misc]
         self._log("等锁期间拿到会话，不起浏览器（进程级缓存复用）")
         _GATE.note_reuse(spared=True)
         self._session = dict(cached)  # 装进当前实例，直连时用它的 cookie/UA
-        html = await self._http.get_html(url, headers=self._headers(),
-                                         cookies=self._cookie_dict())
+        html = await self._get_html(url)
         if self._is_login_wall(html):
             self._log("进程缓存会话已失效，仍需起浏览器")
             return None
@@ -592,6 +671,20 @@ class Fc2CmDbProvider(FilmSourceProvider):  # type: ignore[misc]
                     last_error = SourceError(FailureReason.NETWORK,  # type: ignore[misc]
                                              detail=f"{url}: 浏览器异常：{exc}", url=url)
                     continue
+                if result.get("decided_absent"):
+                    self._log("浏览器已登录确认该条目不存在 → 按未收录处理（不再弹登录）")
+                    # 会话其实有效：回填复用 + 清掉「弹过窗」标记（publish 内部 discard），
+                    # 后续不在的番号可复用该会话直接判 not_found，不再起浏览器 / 卡标记。
+                    session = {"cookie_header": result.get("cookie_header")
+                               or (self._session or {}).get("cookie_header", "") or "",
+                               "user_agent": result.get("user_agent") or self._default_ua(),
+                               "ts": time.time()}
+                    _GATE.publish(key, session)
+                    self._session = session
+                    self._write_session(session)
+                    raise SourceError(FailureReason.NO_USABLE_METADATA,  # type: ignore[misc]
+                                      detail=f"{url}: fc2cmadb 中不存在该条目（已登录确认）",
+                                      url=url)
                 if not result.get("ok"):
                     self._dump("loginwall.last.html", result.get("raw_html") or "")
                     last_error = SourceError(FailureReason.AGE_VERIFICATION,  # type: ignore[misc]
@@ -627,14 +720,22 @@ class Fc2CmDbProvider(FilmSourceProvider):  # type: ignore[misc]
         return tpl.format(base=self._cfg.base_url.rstrip("/"), digits=digits)
 
     async def _get(self, url: str, *, allow_retry: bool = True) -> str:
-        for attempt in range(max(1, int(self._cfg.retries))):
+        retries = max(1, int(self._cfg.retries))
+        for attempt in range(retries):
             self._populate_session()
             try:
-                text = await self._http.get_html(
-                    url, headers=self._headers(), cookies=self._cookie_dict())
+                text = await self._get_html(url)
             except SourceError as exc:  # type: ignore[misc]
                 status = getattr(exc, "http_status", None)
                 if status == 429:
+                    # fc2cmadb 对并发突发限流（429），这是「歇一会儿就恢复」的软限流；
+                    # 公开条目（如 4867210 这类素人号）在并发批量里也常被误伤成 429。
+                    # 正确做法是快路径退避重试、等它喘过气再取正文——直接报限流，或
+                    # 把整批全送进串行浏览器闸门，都会让一个本可刮到的公开番号失败。
+                    if allow_retry and attempt < retries - 1:
+                        self._log(f"快路径 HTTP 429（突发限流），退避重试 {attempt + 1}/{retries}")
+                        await asyncio.sleep(random.uniform(1.2, 2.5))
+                        continue
                     raise SourceError(FailureReason.RATE_LIMITED,  # type: ignore[misc]
                                       detail=f"{url}: HTTP 429 限流", url=url)
                 # fc2cmadb 会把「登录才能看」的视频对匿名/无会话客户端伪装成 404
@@ -1137,22 +1238,64 @@ def browser_auth_fetch(url, *, profile_dir, browser_path=None, headless=False,
             except Exception:  # noqa: BLE001
                 pass
             cdp.call("Page.navigate", {"url": url}, timeout=30)
+            # PROBE 额外返回 hasPage / loggedIn：article 为空时不代表「没登录」，
+            # 还要看 Inertia 共享 props 的 auth.user，才能把「登录墙」和
+            # 「已登录但条目不存在（not_found）」区分开，避免白弹浏览器干等登录。
             PROBE = (
                 "(() => { const el=document.querySelector('script[data-page=\"app\"]');"
-                " if(!el) return JSON.stringify({ok:false,authed:false});"
+                " const hasPage=!!el;"
+                " if(!el) return JSON.stringify({ok:false,authed:false,hasPage:false,loggedIn:null,status:null});"
                 " try{const d=JSON.parse(el.textContent);"
-                "   const a=(d.props&&d.props.article)||null;"
+                "   const props=(d&&d.props)||null;"
+                "   const auth=(props&&props.auth)||null;"
+                "   const loggedIn=!!(auth&&auth.user);"
+                "   const status=(props&&props.status!=null)?props.status:null;"
+                "   const a=(props&&props.article)||null;"
                 "   const has=!!a;"
                 "   const ok=has&& !!(a.title||a.video_id);"
-                "   return JSON.stringify({ok:ok, authed:has,"
-                "     article: has? el.textContent : null});"
-                " }catch(e){ return JSON.stringify({ok:false,authed:false,err:String(e)});}"
+                "   return JSON.stringify({ok:ok, authed:has, loggedIn:loggedIn,"
+                "     hasPage:hasPage, status:status, article: has? el.textContent : null});"
+                " }catch(e){ return JSON.stringify({ok:false,authed:false,loggedIn:null,"
+                "   hasPage:hasPage, status:null, err:String(e)});}"
                 " })()"
             )
             deadline = time.time() + float(login_timeout)
             last_html = ""
             authed = False
-            last_logged = 0.0  # R5：登录墙提示别每轮刷屏，>2s 才追加一条
+            decided_absent = False
+            last_logged = 0.0  # 登录墙提示别每轮刷屏，>2s 才追加一条
+            root_probed = False  # 详情页无 data-page 时，跳站根读一次登录态
+
+            def _probe_root_login():
+                """当前页拿不到登录态（无 data-page，纯 404）→ 跳站根读 auth.user 再跳回。
+
+                返回 (回页了吗, 登录态 True/False/None)。详情页读不到 `auth.user` 时用，
+                因为在裸 404 上无法就地区分「登录墙」与「已登录但条目不存在」。
+                """
+                root = _root_auth_url(url)
+                diag.append(f"详情页无 data-page，跳转 {root} 探测是否已登录")
+                try:
+                    cdp.call("Page.navigate", {"url": root, "timeout": None}, timeout=30)
+                except Exception:  # noqa: BLE001
+                    return False, None
+                state = None
+                rdeadline = time.time() + 20.0
+                while time.time() < rdeadline:
+                    time.sleep(1.0)
+                    try:
+                        p = json.loads(cdp.evaluate(PROBE) or "{}")
+                    except Exception:  # noqa: BLE001
+                        continue
+                    if p.get("hasPage"):
+                        state = p.get("loggedIn")
+                        break
+                try:
+                    cdp.call("Page.navigate", {"url": url, "timeout": None}, timeout=30)
+                except Exception:  # noqa: BLE001
+                    pass
+                time.sleep(1.2)
+                return True, state
+
             while time.time() < deadline:
                 time.sleep(1.2)
                 try:
@@ -1164,7 +1307,7 @@ def browser_auth_fetch(url, *, profile_dir, browser_path=None, headless=False,
                 except Exception:  # noqa: BLE001
                     continue
                 if parsed.get("authed"):
-                    # F1：article 节点出现即视为“已登录抓到页面”（无论 title 是否有值），
+                    # article 节点出现即视为“已登录抓到页面”（无论 title 是否有值），
                     # 立即 break 并置本地 authed=True，避免对未收录页空转满 login_timeout。
                     try:
                         last_html = cdp.evaluate("document.documentElement.outerHTML") or ""
@@ -1172,11 +1315,39 @@ def browser_auth_fetch(url, *, profile_dir, browser_path=None, headless=False,
                         pass
                     authed = True
                     break
+                # 参考 fc2cmadb-crawler：本站对不存在的条目渲染 Inertia Error 组件，
+                # 数据页里带 `props.status`（多为 404）。这是比「auth.user 存在但无
+                # article」更直接、更稳的 not_found 信号（Error 页也可能不带 auth.user，
+                # 光看登录态会漏判）。撞到 status=404 直接判不存在，不吃满 login_timeout。
+                if parsed.get("status") == 404:
+                    diag.append("Inertia Error 组件 status=404 → 判定为条目不存在（not_found）")
+                    try:
+                        last_html = cdp.evaluate("document.documentElement.outerHTML") or ""
+                    except Exception:  # noqa: BLE001
+                        pass
+                    decided_absent = True
+                    break
+                # 没有 article —— 分清是「登录墙」还是「已登录但条目不存在」。
+                logged_in = parsed.get("loggedIn")
+                if logged_in is None and not root_probed:
+                    root_probed = True
+                    _, logged_in = _probe_root_login()
+                if logged_in is True:
+                    # 已登录却始终拿不到 article → 登录态正常、条目确实不存在 → not_found，
+                    # 立刻收手，不再让用户干等登录、也不再占住「弹过窗」标记。
+                    diag.append("登录态正常但无 article → 判定为条目不存在（not_found）")
+                    try:
+                        last_html = cdp.evaluate("document.documentElement.outerHTML") or ""
+                    except Exception:  # noqa: BLE001
+                        pass
+                    decided_absent = True
+                    break
+                # 未登录（登录墙）或读不到登录态 → 按登录墙处理，等用户登录。
                 now = time.time()
-                if now - last_logged > 2.0:  # 已在登录墙：等用户登录，但别刷屏
-                    diag.append("登录墙：等待用户在浏览器里登录…")
+                if now - last_logged > 2.0:
+                    diag.append("未登录（登录墙）：请在浏览器里登录 fc2cmadb…")
                     last_logged = now
-            if not authed:
+            if not authed and not decided_absent:
                 diag.append(f"login_timeout 内未完成登录（url={url}）")
                 # 兜底：就算没登录，也把手头页面抓下来，让调用方判断
                 try:
@@ -1199,4 +1370,4 @@ def browser_auth_fetch(url, *, profile_dir, browser_path=None, headless=False,
     ok = authed and last_html and (_article(last_html) is not None)
     return {"html": last_html if ok else None, "ok": ok, "cookies": cookies,
             "cookie_header": header, "user_agent": ua, "url": url,
-            "raw_html": last_html, "diag": diag}
+            "raw_html": last_html, "diag": diag, "decided_absent": decided_absent}
