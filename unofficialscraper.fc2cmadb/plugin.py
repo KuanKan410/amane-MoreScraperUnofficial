@@ -267,6 +267,8 @@ class Fc2CmDbConfig(BaseModel):  # type: ignore[misc]
         description="留空用会话里的 UA。")
     include_tags: bool = Field(default=True, title="抓标签", description="是否抓取作品的标签信息")
     include_cover: bool = Field(default=True, title="抓封面", description="是否抓取作品的封面图片")
+    include_actresses: bool = Field(default=True, title="抓女优",
+        description="fc2cmadb 的女优是延迟加载的（Inertia deferred），需额外一次请求；关闭可省一次请求。")
     drop_writer_same_tag: bool = Field(default=True,
         title="去掉与片商同名的标签",
         description="本站会把片商名也塞进标签，开启则剔除避免和片商字段重复。")
@@ -599,6 +601,38 @@ class Fc2CmDbProvider(FilmSourceProvider):  # type: ignore[misc]
             return _urllib_get_text(url, cookies=self._cookie_dict(),
                                     headers=self._headers())
 
+    async def _fetch_actresses(self, url: str, version: str | None) -> list[dict[str, str]]:
+        """用 Inertia deferred 部分请求拿女优列表（props.actresses）。
+
+        fc2cmadb 的女优字段是延迟加载的：初始 data-page 只有 deferredProps 声明
+        （如"actresses"），真正数据要靠带 ``X-Inertia-Partial-Data: actresses`` 的第二次
+        请求。女优拿不到不阻塞刮削，返回空列表即可。返回女优名 str 列表（amane 的
+        MediaMetadata 会把 list[str] 收成 FilmActor）。
+        """
+        if not version or not self._cfg.include_actresses:
+            return []
+        headers = dict(self._headers())
+        headers.update({
+            "X-Inertia": "true",
+            "X-Inertia-Version": version,
+            "X-Requested-With": "XMLHttpRequest",
+            "X-Inertia-Partial-Component": "Articles/Show",
+            "X-Inertia-Partial-Data": "actresses",
+        })
+        try:
+            body = await asyncio.to_thread(
+                _urllib_get_text, url, cookies=self._cookie_dict(), headers=headers)
+            dp = json.loads(body or "{}")
+            act = ((dp.get("props") or {}).get("actresses")) or []
+            names = [str(a["name"]).strip()
+                     for a in act if isinstance(a, dict) and (a.get("name") or "").strip()]
+            if names:
+                self._log(f"女优({len(names)}): " + ", ".join(names))
+            return names
+        except Exception as exc:  # noqa: BLE001
+            self._log(f"拉取女优失败（不影响刮削）：{type(exc).__name__}: {exc}")
+            return []
+
     async def _try_reuse(self, url: str, cached: dict[str, Any]) -> dict | None:
         """等锁期间别人已把会话回填进进程缓存：用它的 cookie 再取一次正文。
 
@@ -788,6 +822,10 @@ class Fc2CmDbProvider(FilmSourceProvider):  # type: ignore[misc]
                 raise SourceError(FailureReason.NO_USABLE_METADATA,  # type: ignore[misc]
                                   detail=f"{url}: 没有标题（可能未收录）", url=url)
             return None
+        if self._cfg.include_actresses:
+            dp = _data_page(html)
+            version = (dp or {}).get("version")
+            data["actors"] = await self._fetch_actresses(url, version)
         return self._build_meta(number, digits, url, data)
 
     def _build_meta(self, number, digits, url, data):
@@ -797,6 +835,8 @@ class Fc2CmDbProvider(FilmSourceProvider):  # type: ignore[misc]
         if self._cfg.include_cover and data.get("cover"):
             kwargs["poster_urls"] = [data["cover"]]
             kwargs["thumb_urls"] = [data["cover"]]
+        if data.get("actors"):
+            kwargs["actors"] = data["actors"]
         meta = MediaMetadata(**kwargs)  # type: ignore[misc]
         self._log(f"命中 {number}: title={data['title']!r} release={data['release']} "
                   f"runtime={data['runtime']} studio={data['studio']} tags={len(data['tags'])}")
@@ -812,7 +852,7 @@ class Plugin(FilmSourcePlugin):  # type: ignore[misc]
             content_types=frozenset({"fc2"}),
             urls=(BASE_URL,), rate_limit=1.0,
             metadata_fields=frozenset({"title","release","runtime","studio","tags",
-                                        "poster_urls","thumb_urls","source_url","external_id"}),
+                                        "actors","poster_urls","thumb_urls","source_url","external_id"}),
         )
     def build(self, context, config):  # type: ignore[misc]
         return Fc2CmDbProvider(context, config)
