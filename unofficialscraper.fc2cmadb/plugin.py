@@ -310,6 +310,10 @@ class _SessionGate:
         )
         self._sessions: dict[str, dict[str, Any]] = {}
         self._failed_at: dict[str, float] = {}
+        # 每个会话键「是否已经为用户弹过一次登录窗口」。弹过一次且还没拿到会话的，
+        # 后续同会话的 404/登录墙直接快速报「需先登录」，不再反复弹窗干等
+        # （否则刮一大批「本站没有」的番号时，会在没登录状态下每个都弹一次浏览器）。
+        self._login_prompted: set[str] = set()
         self.launches = 0
         self.reuses = 0
         self.already_open = 0  # 省下来的浏览器次数（差点又起一个）
@@ -340,9 +344,13 @@ class _SessionGate:
         return dict(data) if data else None
 
     def publish(self, key: str, session: dict[str, Any]) -> None:
-        """把一条新会话放进进程缓存（谁过完登录，大家都看得见）。"""
+        """把一条新会话放进进程缓存（谁过完登录，大家都看得见）。
+
+        登录成功 = 拿到会话了，清掉「已弹过登录窗」的标记，允许下次会话过期后重新弹。
+        """
         with self._mutex:
             self._sessions[key] = dict(session)
+            self._login_prompted.discard(key)
 
     def note_launch(self) -> None:
         with self._mutex:
@@ -351,6 +359,17 @@ class _SessionGate:
     def note_success(self, key: str) -> None:
         with self._mutex:
             self._failed_at.pop(key, None)
+            self._login_prompted.discard(key)  # 登录成功也清掉「弹过一次」标记
+
+    def login_prompted(self, key: str) -> bool:
+        """这个会话键是否已经为用户弹过一次登录窗（且还没拿到会话）。"""
+        with self._mutex:
+            return key in self._login_prompted
+
+    def note_login_prompt(self, key: str) -> None:
+        """记一笔「已经为这个会话弹过登录窗」。"""
+        with self._mutex:
+            self._login_prompted.add(key)
 
     def note_reuse(self, spared: bool = False) -> None:
         with self._mutex:
@@ -378,6 +397,7 @@ class _SessionGate:
         with self._mutex:
             self._sessions.clear()
             self._failed_at.clear()
+            self._login_prompted.clear()
             self.launches = self.reuses = self.already_open = 0
 
 
@@ -544,6 +564,15 @@ class Fc2CmDbProvider(FilmSourceProvider):  # type: ignore[misc]
                 self._log(f"浏览器流程刚失败过，冷却中（还剩 {left:.0f}s）")
                 raise SourceError(FailureReason.UNEXPECTED,  # type: ignore[misc]
                                   detail=f"{url}: 浏览器冷却中，稍后再试", url=url)
+            # 已经为这个会话弹过一次登录窗、又还没拿到会话 → 不再反复弹窗。
+            # 每次放行内 retries 是顺序尝试（不在此块内），所以只拦「下一个请求
+            # 又要起浏览器」的情况，保证一批未收录番号不轰炸用户。
+            if _GATE.login_prompted(key):
+                self._log("已为新登录弹过一次窗且未拿到会话 → 不再重复弹，报需先登录")
+                raise SourceError(FailureReason.AGE_VERIFICATION,  # type: ignore[misc]
+                                  detail=f"{url}: 需要先登录 fc2cmadb 才能刮取（本次已弹过一次登录窗）",
+                                  url=url)
+            _GATE.note_login_prompt(key)
             profile = self._profile_dir()
             profile.mkdir(parents=True, exist_ok=True)  # 持久！登录态跨重启保留
             attempts = max(1, int(cfg.browser_attempts))
