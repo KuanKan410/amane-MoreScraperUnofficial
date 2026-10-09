@@ -9,7 +9,7 @@ Amane 媒体库的非官方补充元数据源插件合集。基于 Amane 官方�
 | `esl1.fc2ppvdb` | 0.3.0 | `fc2` | fc2ppv-db.com | FC2 元数据。内置进程级浏览器复用，应对 Cloudflare 挑战 |
 | `esl1.javarchive` | 0.7.0 | `fc2` / `censored` / `uncensored` | javarchive.com | 多合一兜底源，覆盖 FC2 与有码/无码 JAV，含番号后缀匹配修复 |
 | `esl1.supfc2` | 0.1.0 | `fc2` | supfc2.com | FC2 素人内容，含剧照墙 |
-| `esl1.fd2ppv` | 0.1.0 | `fc2` | fd2ppv.com | 优先 HTTP 请求，CDP 浏览器兜底 Cloudflare，直接用浏览器取回详情页 |
+| `esl1.fd2ppv` | 0.1.0 | `fc2` | fd2ppv.cc | FC2 元数据，含剧照墙（`extrafanart`）。详情页在 Cloudflare 挑战后，撞挑战自动起浏览器兜底 |
 | `esl1.supjav` | 0.2.1 | `fc2` / `censored` / `uncensored` | supjav.com | 通用 JAV 元数据，覆盖三条路由 |
 | `unofficialscraper.fc2cmadb` | 0.1.0 | `fc2` | fc2cmadb.com | FC2 无码破解库。需本机浏览器登录一次（会话复用）；对「登录才可见」的条目标返回 404，插件撞 404 自动回落已登录浏览器兜底 |
 
