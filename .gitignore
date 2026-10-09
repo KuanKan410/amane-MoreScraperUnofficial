@@ -1,2 +1,19 @@
+# Python
 __pycache__/
 *.py[cod]
+*.pyo
+.pytest_cache/
+.venv/
+venv/
+
+# 开发工具产生的目录（本地分析用，不进版本库）
+.codegraph/
+.playwright-mcp/
+.claude/
+
+# 插件运行时落在插件目录里的产物
+import-report.txt
+debug/
+*.log
+cf_session.json
+browser-profile/
