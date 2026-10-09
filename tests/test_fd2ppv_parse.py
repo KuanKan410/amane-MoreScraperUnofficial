@@ -146,3 +146,69 @@ def test_is_challenge_detects_cloudflare_page():
         "<html><head><title>Just a moment...</title></head><body></body></html>"
     )
     assert not PLUGIN._is_challenge(DETAIL_HTML)
+
+
+class _StubContext:
+    http_client = None
+    web_client = None
+
+    def __init__(self, data_dir):
+        self.data_dir = data_dir
+
+
+def _provider(tmp_path, **overrides):
+    cfg = PLUGIN.Fd2PpvConfig(**overrides)
+    return PLUGIN.Fd2PpvProvider(_StubContext(tmp_path), cfg)
+
+
+def test_build_meta_full(tmp_path):
+    data = PLUGIN._extract_work_fields(DETAIL_HTML)
+    meta = _provider(tmp_path)._build_meta("FC2-PPV-4989610", "4989610",
+                                           "https://fd2ppv.cc/articles/4989610", data)
+    assert meta.number == "FC2-PPV-4989610"
+    assert meta.external_id == "4989610"
+    assert meta.source_url == "https://fd2ppv.cc/articles/4989610"
+    assert meta.release == "2026-10-09"
+    assert meta.runtime == 58
+    assert meta.studio == "ひらめき無無剣"
+    assert meta.tags == ["中出し", "コスプレ", "体操服"]
+    assert meta.actors == ["元アイドルちゃん"]
+    assert meta.poster_urls == [
+        "https://storage202000.contents.fc2.com/file/385/38437260/1791463320.51.jpg"
+    ]
+    assert meta.thumb_urls == meta.poster_urls
+    assert len(meta.extrafanart) == 2
+
+
+def test_build_meta_respects_switches(tmp_path):
+    data = PLUGIN._extract_work_fields(DETAIL_HTML)
+    meta = _provider(
+        tmp_path,
+        include_cover=False,
+        include_gallery=False,
+        include_tags=False,
+        include_actresses=False,
+    )._build_meta("FC2-PPV-4989610", "4989610", "u", data)
+    assert not getattr(meta, "poster_urls", None)
+    assert not getattr(meta, "extrafanart", None)
+    assert not getattr(meta, "tags", None)
+    assert not getattr(meta, "actors", None)
+    assert meta.title.startswith("無修正")
+
+
+def test_build_meta_max_tags(tmp_path):
+    data = PLUGIN._extract_work_fields(DETAIL_HTML)
+    meta = _provider(tmp_path, max_tags=2)._build_meta("FC2-PPV-4989610", "4989610", "u", data)
+    assert meta.tags == ["中出し", "コスプレ"]
+
+
+def test_build_meta_sparse_page_does_not_crash(tmp_path):
+    data = PLUGIN._extract_work_fields(SPARSE_HTML)
+    meta = _provider(tmp_path)._build_meta("FC2-PPV-4989588", "4989588", "u", data)
+    assert meta.number == "FC2-PPV-4989588"
+    assert meta.title.startswith("【名作再販】")
+    assert not getattr(meta, "release", None)
+    assert not getattr(meta, "runtime", None)
+    assert not getattr(meta, "studio", None)
+    assert not getattr(meta, "tags", None)
+    assert not getattr(meta, "actors", None)

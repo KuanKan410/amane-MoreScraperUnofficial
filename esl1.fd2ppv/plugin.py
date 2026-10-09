@@ -419,6 +419,10 @@ class Fd2PpvConfig(BaseModel):
         default=0, title="标签上限",
         description="最多写入多少个标签；0 表示不限制。",
     )
+    drop_category_tag: bool = Field(
+        default=True, title="去掉分类同名标签",
+        description="标签里若出现与「カテゴリ」同名的项（如 未流出），写入前去掉。",
+    )
 
     user_agent: str = Field(
         default="", title="User-Agent",
@@ -504,8 +508,111 @@ class Fd2PpvProvider(FilmSourceProvider):
         self._session: dict | None = None
         self._session_lock: asyncio.Lock | None = None
 
+    # ---------- 主流程 ----------
+
     async def fetch(self, query, options=None):
+        number = (query.number or "").strip()
+        if not number:
+            self._log("跳过：查询里没有番号")
+            return None
+        digits = _fc2_digits(number)
+        if not digits:
+            self._log(f"跳过：{number} 不是 FC2 番号（本站只收录 FC2-PPV-<数字>）")
+            return None
+        url = self._detail_url(digits)
+        self._log(f"=== 开始 {number} digits={digits} → {url}")
+
+        text, err = await self._get(url)
+        if err:
+            return self._miss(number, [err])
+        if not text:
+            return self._miss(number, ["空响应"])
+        if _is_challenge(text):
+            return self._miss(number, ["撞到 Cloudflare 挑战页，浏览器兜底也没过"])
+        if self._config.debug_save_pages:
+            self._dump(f"{_safe_name(digits)}.html", text)
+
+        data = _extract_work_fields(text)
+        page_number = _fc2_digits(data.get("number") or "")
+        if page_number and page_number.lstrip("0") != digits.lstrip("0"):
+            self._log(f"番号不符：页面 {page_number} ≠ 目标 {digits}")
+            return self._miss(number, [f"详情页番号不符：{page_number}"])
+        if not data.get("title"):
+            return self._miss(number, ["详情页没有标题（站点可能改版 / 未收录）"])
+        return self._build_meta(number, digits, url, data)
+
+    def _build_meta(self, number: str, digits: str, url: str, data: dict):
+        kwargs: dict[str, object] = {
+            "number": number,
+            "title": data["title"],
+            "source_url": url,
+            "external_id": digits,
+        }
+        if data.get("release"):
+            kwargs["release"] = data["release"]
+        if data.get("runtime"):
+            kwargs["runtime"] = data["runtime"]
+        if data.get("studio"):
+            kwargs["studio"] = data["studio"]
+
+        tags = list(data.get("tags") or [])
+        if self._config.drop_category_tag and data.get("category"):
+            tags = [t for t in tags if t != data["category"]]
+        if self._config.max_tags > 0:
+            tags = tags[: self._config.max_tags]
+        if self._config.include_tags and tags:
+            kwargs["tags"] = tags
+
+        if self._config.include_actresses and data.get("actors"):
+            kwargs["actors"] = list(data["actors"])
+        if self._config.include_cover and data.get("poster"):
+            kwargs["poster_urls"] = [data["poster"]]
+            kwargs["thumb_urls"] = [data["poster"]]
+        if self._config.include_gallery and data.get("gallery"):
+            kwargs["extrafanart"] = list(data["gallery"])
+
+        allowed = _metadata_field_names()
+        if allowed:
+            kwargs = {k: v for k, v in kwargs.items() if k in allowed}
+
+        self._log(
+            "组装完成: " + ", ".join(f"{k}={str(v)[:60]}" for k, v in kwargs.items())
+        )
+        return MediaMetadata(**kwargs)  # type: ignore[misc]
+
+    def _detail_url(self, digits: str) -> str:
+        base = (self._config.base_url or BASE).rstrip("/")
+        template = self._config.detail_template or "{base}/articles/{digits}"
+        return template.replace("{base}", base).replace("{digits}", digits)
+
+    def _miss(self, number: str, notes: list[str]):
+        detail = "; ".join(notes) if notes else "没有任何可用来源"
+        self._log(f"未命中 {number}：{detail}")
+        if self._config.report_misses:
+            raise SourceError(  # type: ignore[misc]
+                FailureReason.NO_USABLE_METADATA, detail=f"fd2ppv: {detail}"
+            )
         return None
+
+    # ---------- 诊断 ----------
+
+    def _log(self, message: str) -> None:
+        if not self._config.debug_dump:
+            return
+        try:
+            self._debug_dir.mkdir(parents=True, exist_ok=True)
+            stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+            with (self._debug_dir / "debug.log").open("a", encoding="utf-8") as fh:
+                fh.write(f"[{stamp}] {message}\n")
+        except Exception:  # noqa: BLE001 - 日志失败不能影响抓取
+            pass
+
+    def _dump(self, name: str, text: str) -> None:
+        try:
+            self._debug_dir.mkdir(parents=True, exist_ok=True)
+            (self._debug_dir / name).write_text(text, encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            pass
 
 
 class Plugin(FilmSourcePlugin):
