@@ -12,6 +12,20 @@ Amane 媒体库的非官方补充元数据源插件合集。基于 Amane 官方�
 | `unofficialscraper.fd2ppv` | 0.1.0 | `fc2` | fd2ppv.cc | FC2 元数据，含剧照墙（`extrafanart`）。详情页在 Cloudflare 挑战后，撞挑战自动起浏览器兜底 |
 | `esl1.supjav` | 0.2.1 | `fc2` / `censored` / `uncensored` | supjav.com | 通用 JAV 元数据，覆盖三条路由 |
 | `unofficialscraper.fc2cmadb` | 0.1.0 | `fc2` | fc2cmadb.com | FC2 无码破解库。需本机浏览器登录一次（会话复用）；对「登录才可见」的条目标返回 404，插件撞 404 自动回落已登录浏览器兜底 |
+| `unofficialscraper.fd2ppv` | 0.1.0 | `fc2` | fd2ppv.cc | FC2 元数据，含剧照墙（`extrafanart`）。详情页在 Cloudflare 挑战后，撞挑战自动起浏览器兜底 |
+
+## 各插件文档
+
+每个插件都有独立的 README，介绍该站的实测细节、字段来源、配置与排错：
+
+| 插件 | 文档 |
+| --- | --- |
+| `esl1.fc2ppvdb` | [esl1.fc2ppvdb/README.md](esl1.fc2ppvdb/README.md) |
+| `esl1.javarchive` | [esl1.javarchive/README.md](esl1.javarchive/README.md) |
+| `esl1.supfc2` | [esl1.supfc2/README.md](esl1.supfc2/README.md) |
+| `esl1.supjav` | [esl1.supjav/README.md](esl1.supjav/README.md) |
+| `unofficialscraper.fc2cmadb` | [unofficialscraper.fc2cmadb/README.md](unofficialscraper.fc2cmadb/README.md) |
+| `unofficialscraper.fd2ppv` | [unofficialscraper.fd2ppv/README.md](unofficialscraper.fd2ppv/README.md) |
 
 ## 安装方式
 
