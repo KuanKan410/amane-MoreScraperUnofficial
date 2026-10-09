@@ -9,6 +9,7 @@ Amane 媒体库的非官方补充元数据源插件合集。基于 Amane 官方�
 | `esl1.fc2ppvdb` | 0.3.0 | `fc2` | fc2ppv-db.com | FC2 元数据。内置进程级浏览器复用，应对 Cloudflare 挑战 |
 | `esl1.javarchive` | 0.7.0 | `fc2` / `censored` / `uncensored` | javarchive.com | 多合一兜底源，覆盖 FC2 与有码/无码 JAV，含番号后缀匹配修复 |
 | `esl1.supfc2` | 0.1.0 | `fc2` | supfc2.com | FC2 素人内容，含剧照墙 |
+| `esl1.fd2ppv` | 0.1.0 | `fc2` | fd2ppv.com | 优先 HTTP 请求，CDP 浏览器兜底 Cloudflare，直接用浏览器取回详情页 |
 | `esl1.supjav` | 0.2.1 | `fc2` / `censored` / `uncensored` | supjav.com | 通用 JAV 元数据，覆盖三条路由 |
 | `unofficialscraper.fc2cmadb` | 0.1.0 | `fc2` | fc2cmadb.com | FC2 无码破解库。需本机浏览器登录一次（会话复用）；对「登录才可见」的条目标返回 404，插件撞 404 自动回落已登录浏览器兜底 |
 
@@ -25,7 +26,7 @@ Amane 媒体库的非官方补充元数据源插件合集。基于 Amane 官方�
 
 - **Python 依赖**：仅用 Amane 自带的 `parsel` / `pydantic`，无需额外安装第三方包
 - **浏览器支持**：
-  - `esl1.fc2ppvdb` / `esl1.supfc2` / `esl1.supjav`：需要 Chrome / Edge 内核浏览器，用于通过 Cloudflare 挑战获取 `cf_clearance` 会话
+  - `esl1.fc2ppvdb` / `esl1.supfc2` / `esl1.supjav` / `esl1.fd2ppv`：需要 Chrome / Edge 内核浏览器（`esl1.fd2ppv` 直接用浏览器取回详情页，其余用于通过 Cloudflare 挑战获取 `cf_clearance` 会话）
   - `unofficialscraper.fc2cmadb`：需要浏览器来做**交互式登录**（fc2cmadb 要登录才能看，首次/会话过期会弹一次浏览器窗口让用户手动登录，之后按 `session_ttl` 复用会话）；未登录时刮多个未收录番号只弹一次，其余快速报「需先登录」
   - `esl1.javarchive`：不需要浏览器，纯静态搜索 + 解析
 - **代理**：站点若被墙，需配代理（支持环境代理或 Amane 全局代理）
