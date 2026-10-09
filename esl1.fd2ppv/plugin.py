@@ -165,6 +165,226 @@ BASE = "https://fd2ppv.cc"
 IMAGE_HOST = "https://contents.fc2.com"
 
 
+# ---------- 纯函数：番号 / 日期 / 时长 / 图片 ----------
+
+_FC2_RE = re.compile(r"^FC2(?:[-_\s]?PPV)?[-_\s]*(\d{4,9})$", re.I)
+_DIGITS_RE = re.compile(r"^\s*(\d{4,9})\s*$")
+
+
+def _fc2_digits(raw: str) -> str | None:
+    """把 FC2 番号的各种写法归一成纯数字串；不是 FC2 就返回 None。"""
+    s = (raw or "").strip()
+    if not s:
+        return None
+    m = _FC2_RE.match(s) or _DIGITS_RE.match(s)
+    return m.group(1) if m else None
+
+
+def _norm_date(raw: str) -> str | None:
+    s = _squash(raw)
+    if not s:
+        return None
+    m = re.match(r"(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})", s)
+    if m:
+        y, mo, d = (int(x) for x in m.groups())
+        return f"{y:04d}-{mo:02d}-{d:02d}"
+    m = re.match(r"(\d{4})[-/.](\d{1,2})", s)
+    if m:
+        y, mo = (int(x) for x in m.groups())
+        return f"{y:04d}-{mo:02d}"
+    return s
+
+
+def _norm_duration(raw: str) -> int | None:
+    """``H:MM:SS`` / ``MM:SS`` / ``MM`` → 分钟；全零或解析不出返回 None。"""
+    s = _squash(raw)
+    if not s:
+        return None
+    parts = [p for p in re.split(r"[:\s]+", s) if p]
+    try:
+        nums = [int(p) for p in parts]
+    except ValueError:
+        return None
+    if len(nums) == 3:
+        h, m = nums[0], nums[1]
+    elif len(nums) == 2:
+        h, m = 0, nums[0]
+    elif len(nums) == 1:
+        h, m = 0, nums[0]
+    else:
+        return None
+    total = h * 60 + m
+    return total or None
+
+
+_THUMB_WRAP_RE = re.compile(r"^https?://contents-thumbnail2\.fc2\.com/w\d+/", re.I)
+
+
+def _canonical_image_url(url: str) -> str:
+    """还原被 FC2 缩略图域包裹的原始图地址，并补全协议相对 URL。"""
+    u = (url or "").strip()
+    if not u:
+        return ""
+    if u.startswith("//"):
+        u = "https:" + u
+    return _THUMB_WRAP_RE.sub("https://", u)
+
+
+def _unique(items) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in items:
+        key = (item or "").strip()
+        if key and key not in seen:
+            seen.add(key)
+            out.append(key)
+    return out
+
+
+# ---------- 纯函数：文本 ----------
+
+_TAG_STRIP_RE = re.compile(r"<[^>]+>")
+_SPACE_RE = re.compile(r"\s+")
+
+
+def _strip_tags(fragment: str) -> str:
+    return _TAG_STRIP_RE.sub(" ", fragment or "")
+
+
+def _squash(text: str) -> str:
+    return _SPACE_RE.sub(" ", (text or "")).strip()
+
+
+def _text_of(fragment: str) -> str:
+    """去标签 + 解 HTML 实体 + 折叠空白。"""
+    return _squash(_html.unescape(_strip_tags(fragment)))
+
+
+def _safe_name(text: str) -> str:
+    return re.sub(r"[^0-9A-Za-z._-]+", "_", (text or "").strip())[:80] or "x"
+
+
+# ---------- 纯函数：详情页解析 ----------
+
+_TITLE_H1_RE = re.compile(
+    r'<h1[^>]*class="[^"]*work-title[^"]*"[^>]*>(.*?)</h1>', re.S | re.I
+)
+_META_DESC_RE = re.compile(
+    r'<meta[^>]+name="description"[^>]+content="([^"]*)"', re.S | re.I
+)
+_TITLE_PREFIX_RE = re.compile(r"^\s*FC2\s*(?:PPV)?\s*[-_]?\s*\d+\s*", re.I)
+_LD_JSON_RE = re.compile(
+    r'<script[^>]+type="application/ld\+json"[^>]*>(.*?)</script>', re.S | re.I
+)
+_META_PAIR_RE = re.compile(
+    r'<div[^>]*class="[^"]*work-meta-label[^"]*"[^>]*>(.*?)</div>\s*'
+    r'<div[^>]*class="[^"]*work-meta-value[^"]*"[^>]*>(.*?)</div>',
+    re.S | re.I,
+)
+_WORK_TAGS_RE = re.compile(
+    r'<div[^>]*class="[^"]*work-tags[^"]*"[^>]*>(.*?)</div>', re.S | re.I
+)
+_TAG_LINK_RE = re.compile(r'<a[^>]+href="[^"]*/tags/[^"]*"[^>]*>(.*?)</a>', re.S | re.I)
+_WORK_PHOTOS_RE = re.compile(
+    r'<div[^>]*class="[^"]*work-photos[^"]*"[^>]*>(.*?)</div>', re.S | re.I
+)
+_ARTIST_RE = re.compile(
+    r'<h3[^>]*class="[^"]*artist-name[^"]*"[^>]*>(.*?)</h3>', re.S | re.I
+)
+
+_UNKNOWN_LABELS = {"", "不詳", "不详"}
+
+_CHALLENGE_TITLE_RE = re.compile(
+    r"<title>\s*(just a moment|attention required|请稍候)", re.I
+)
+_CHALLENGE_MARKERS = (
+    "cf_chl_opt",
+    "cf-browser-verification",
+    "enable javascript and cookies to continue",
+    "challenge-platform",
+)
+
+
+def _is_challenge(html: str) -> bool:
+    """判断响应正文是不是 Cloudflare 挑战 / 拦截页。"""
+    head = (html or "")[:8000]
+    if _CHALLENGE_TITLE_RE.search(head):
+        return True
+    low = head.lower()
+    return any(marker in low for marker in _CHALLENGE_MARKERS)
+
+
+def _extract_work_fields(html: str) -> dict:
+    """从详情页 HTML 里抽出全部目标字段（纯函数，无副作用）。"""
+    text = html or ""
+
+    # 1) .work-meta 的「标签 → 值」表
+    meta: dict[str, str] = {}
+    for m in _META_PAIR_RE.finditer(text):
+        label = _text_of(m.group(1))
+        if label and label not in meta:
+            meta[label] = _text_of(m.group(2))
+
+    # 2) 番号（h1.work-title）
+    hm = _TITLE_H1_RE.search(text)
+    number = _text_of(hm.group(1)) if hm else ""
+
+    # 3) 标题：JSON-LD description 优先（已去前缀），meta description 兜底
+    title = ""
+    lm = _LD_JSON_RE.search(text)
+    if lm:
+        try:
+            ld = json.loads(lm.group(1))
+        except Exception:  # noqa: BLE001 - LD 坏了不影响其它字段
+            ld = None
+        if isinstance(ld, dict):
+            title = _squash(str(ld.get("description") or ""))
+    if not title:
+        dm = _META_DESC_RE.search(text)
+        if dm:
+            title = _TITLE_PREFIX_RE.sub("", _text_of(dm.group(1))).strip()
+
+    # 4) 图片：FC2 官方域 = 封面；其余（xximgs）= 剧照墙
+    poster = ""
+    gallery: list[str] = []
+    pm = _WORK_PHOTOS_RE.search(text)
+    if pm:
+        for raw in _squash(_strip_tags(pm.group(1))).split():
+            url = _canonical_image_url(raw)
+            if not url.startswith("http"):
+                continue
+            if "contents.fc2.com" in url:
+                poster = url
+            else:
+                gallery.append(url)
+
+    # 5) 标签（必须限定在 .work-tags 内，否则会命中导航链接「タグ」）
+    tags: list[str] = []
+    tm = _WORK_TAGS_RE.search(text)
+    if tm:
+        tags = [_text_of(x) for x in _TAG_LINK_RE.findall(tm.group(1))]
+
+    # 6) 女优（过滤「不詳」）
+    actors = [_text_of(x) for x in _ARTIST_RE.findall(text)]
+
+    def _clean(value: str | None) -> str | None:
+        v = _squash(value or "")
+        return None if v in _UNKNOWN_LABELS else v
+
+    return {
+        "number": number,
+        "title": title,
+        "release": _norm_date(meta.get("配信日", "")),
+        "runtime": _norm_duration(meta.get("収録時間", "")),
+        "studio": _clean(meta.get("販売者")),
+        "category": _clean(meta.get("カテゴリ")),
+        "tags": _unique([t for t in tags if t != "タグ"]),
+        "actors": _unique([a for a in actors if _clean(a)]),
+        "poster": poster,
+        "gallery": _unique(gallery),
+    }
+
+
 class Fd2PpvConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
