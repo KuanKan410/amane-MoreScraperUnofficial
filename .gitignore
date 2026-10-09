@@ -21,3 +21,4 @@ browser-profile/
 # 本地工作产物，不进版本库
 docs/
 scrapelogs/
+tests/
