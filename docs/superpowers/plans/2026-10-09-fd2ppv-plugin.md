@@ -1,10 +1,10 @@
-# fd2ppv.cc 刮削插件（esl1.fd2ppv）实现计划
+# fd2ppv.cc 刮削插件（unofficialscraper.fd2ppv）实现计划
 
 > **面向 AI 代理的工作者：** 必需子技能：使用 subagent-driven-development（推荐）或 executing-plans 逐任务实现此计划。步骤使用复选框（`- [ ]`）语法来跟踪进度。
 
-**目标：** 新增插件 `esl1.fd2ppv`，把 fd2ppv.cc 作为 FC2 元数据源接入 Amane；顺手把 `.codegraph/`、`.playwright-mcp/` 等开发目录加进 `.gitignore`。
+**目标：** 新增插件 `unofficialscraper.fd2ppv`，把 fd2ppv.cc 作为 FC2 元数据源接入 Amane；顺手把 `.codegraph/`、`.playwright-mcp/` 等开发目录加进 `.gitignore`。
 
-**架构：** 单文件插件（与仓库现有 5 个插件一致）：`esl1.fd2ppv/plugin.py`。结构照搬 `esl1.supfc2/plugin.py`——宿主 SDK 握手 + Pydantic 配置 + Provider + 逐字复制的 CDP 浏览器块。番号 → `/articles/<digits>` 直达详情页；普通 HTTP 优先，撞 Cloudflare 挑战时起本机浏览器兜底。**解析层用标准库 `re`**（站点是服务端渲染的静态 HTML，结构规整；本机 anaconda 无 lxml/cssselect → 无 parsel，用正则既零依赖又可单测）。
+**架构：** 单文件插件（与仓库现有 5 个插件一致）：`unofficialscraper.fd2ppv/plugin.py`。结构照搬 `esl1.supfc2/plugin.py`——宿主 SDK 握手 + Pydantic 配置 + Provider + 逐字复制的 CDP 浏览器块。番号 → `/articles/<digits>` 直达详情页；普通 HTTP 优先，撞 Cloudflare 挑战时起本机浏览器兜底。**解析层用标准库 `re`**（站点是服务端渲染的静态 HTML，结构规整；本机 anaconda 无 lxml/cssselect → 无 parsel，用正则既零依赖又可单测）。
 
 **技术栈：** Python 3.14（amane 内嵌解释器）、Pydantic v2、标准库 `re`/`json`/`asyncio`/`socket`/`subprocess`（手写 CDP WebSocket 客户端）。测试：pytest 9 + anaconda Python。
 
@@ -14,7 +14,7 @@
 
 ## 全局约束
 
-- **插件 ID `esl1.fd2ppv`**，`content_types=frozenset({"fc2"})`，`rate_limit=1.0`，版本 `0.1.0`。
+- **插件 ID `unofficialscraper.fd2ppv`**，`content_types=frozenset({"fc2"})`，`rate_limit=1.0`，版本 `0.1.0`。
 - **只允许标准库 + 宿主自带的 `pydantic`**；不得引入 parsel / lxml / httpx 等第三方包（插件跑在打包好的 amane 里）。
 - **网络请求一律走 `context.http_client.get_html(url, headers=, cookies=)`**；浏览器只用于过 Cloudflare 挑战。
 - 插件目录名、类名、方法名、配置字段名**用英文**；`Field(title=..., description=...)` 里的**文案用中文**（宿主的配置表单按 JSON Schema 渲染，插件专属字段没有内置 i18n 词条）。
@@ -116,8 +116,8 @@
 
 | 文件 | 职责 |
 | --- | --- |
-| `esl1.fd2ppv/plugin.py` | **新建。** 插件本体：SDK 握手 + 配置 + 纯解析函数 + Provider + Plugin 入口 + 复制的 CDP 块 |
-| `tests/conftest.py` | **新建。** 打桩 `amane.*` 宿主 SDK，用 `importlib` 按路径加载 `esl1.fd2ppv/plugin.py`，导出 `PLUGIN` |
+| `unofficialscraper.fd2ppv/plugin.py` | **新建。** 插件本体：SDK 握手 + 配置 + 纯解析函数 + Provider + Plugin 入口 + 复制的 CDP 块 |
+| `tests/conftest.py` | **新建。** 打桩 `amane.*` 宿主 SDK，用 `importlib` 按路径加载 `unofficialscraper.fd2ppv/plugin.py`，导出 `PLUGIN` |
 | `tests/test_fd2ppv_parse.py` | **新建。** 纯解析函数与 `_build_meta` 的单元测试 |
 | `.gitignore` | **修改。** 加入开发/运行产物 |
 | `README.md` | **修改。** 插件列表加一行 |
@@ -179,10 +179,10 @@ git commit -m "chore: gitignore 忽略 .codegraph/.playwright-mcp 等开发与�
 
 ### 任务 2：插件骨架 + 测试脚手架
 
-交付物：`esl1.fd2ppv/plugin.py` 能被 amane 加载（有正确的 `Plugin` 类与描述符），`fetch()` 暂时恒返回 `None`；本地 pytest 能导入它并校验描述符。
+交付物：`unofficialscraper.fd2ppv/plugin.py` 能被 amane 加载（有正确的 `Plugin` 类与描述符），`fetch()` 暂时恒返回 `None`；本地 pytest 能导入它并校验描述符。
 
 **文件：**
-- 创建：`esl1.fd2ppv/plugin.py`
+- 创建：`unofficialscraper.fd2ppv/plugin.py`
 - 创建：`tests/conftest.py`
 - 测试：`tests/test_fd2ppv_parse.py`
 
@@ -191,12 +191,12 @@ git commit -m "chore: gitignore 忽略 .codegraph/.playwright-mcp 等开发与�
 创建 `tests/test_fd2ppv_parse.py`：
 
 ```python
-"""esl1.fd2ppv 的单元测试（只测纯逻辑；浏览器相关靠实机验证）。"""
+"""unofficialscraper.fd2ppv 的单元测试（只测纯逻辑；浏览器相关靠实机验证）。"""
 
 
 def test_descriptor_is_well_formed():
     desc = PLUGIN.Plugin.descriptor()
-    assert desc.id == "esl1.fd2ppv"
+    assert desc.id == "unofficialscraper.fd2ppv"
     assert desc.content_types == frozenset({"fc2"})
     assert "film_metadata" in desc.capabilities or PLUGIN.SourceCapability.FILM_METADATA in desc.capabilities
     assert "title" in desc.metadata_fields
@@ -216,7 +216,7 @@ def test_config_defaults_are_sane():
 - [ ] **步骤 2：创建 `tests/conftest.py`**
 
 ```python
-"""把 amane 宿主 SDK 打桩，好让 esl1.fd2ppv/plugin.py 能在本地 pytest 里导入。
+"""把 amane 宿主 SDK 打桩，好让 unofficialscraper.fd2ppv/plugin.py 能在本地 pytest 里导入。
 
 插件在 amane 里跑时，SDK 由宿主注入；本地没有 amane，所以造一组最小替身，
 只为跑通纯解析逻辑的单元测试。真机行为仍以 amane 里的 debug.log 为准。
@@ -228,7 +228,7 @@ import types
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN_PATH = ROOT / "esl1.fd2ppv" / "plugin.py"
+PLUGIN_PATH = ROOT / "unofficialscraper.fd2ppv" / "plugin.py"
 
 
 def _install_amane_stubs() -> None:
@@ -345,9 +345,9 @@ def pytest_configure(config):
 - [ ] **步骤 3：运行测试确认失败**
 
 运行：`/c/ProgramData/anaconda3/python.exe -m pytest tests -v`（在仓库根目录）
-预期：FAIL —— `FileNotFoundError` / `spec_from_file_location` 返回 None，因为 `esl1.fd2ppv/plugin.py` 还不存在。
+预期：FAIL —— `FileNotFoundError` / `spec_from_file_location` 返回 None，因为 `unofficialscraper.fd2ppv/plugin.py` 还不存在。
 
-- [ ] **步骤 4：创建 `esl1.fd2ppv/plugin.py` 骨架**
+- [ ] **步骤 4：创建 `unofficialscraper.fd2ppv/plugin.py` 骨架**
 
 按下面的分区写。**`# ---- 宿主 SDK 握手 ----` 到 `WebClient = _API["WebClient"]` 之间，逐字复制 `esl1.supfc2/plugin.py:102-217`。**
 
@@ -529,14 +529,14 @@ class Fd2PpvProvider(FilmSourceProvider):
 
 
 class Plugin(FilmSourcePlugin):
-    """放在 ``{数据目录}/plugins/sources/esl1.fd2ppv/`` 下的 plugin.py 必须导出此类。"""
+    """放在 ``{数据目录}/plugins/sources/unofficialscraper.fd2ppv/`` 下的 plugin.py 必须导出此类。"""
 
     config_model = Fd2PpvConfig
 
     @classmethod
     def descriptor(cls):
         return SourceDescriptor(
-            id="esl1.fd2ppv",
+            id="unofficialscraper.fd2ppv",
             name="fd2ppv.cc (FC2 元数据)",
             version="0.1.0",
             capabilities=frozenset({SourceCapability.FILM_METADATA}),
@@ -574,7 +574,7 @@ class Plugin(FilmSourcePlugin):
 - [ ] **步骤 6：Commit**
 
 ```bash
-git add esl1.fd2ppv/plugin.py tests/conftest.py tests/test_fd2ppv_parse.py
+git add unofficialscraper.fd2ppv/plugin.py tests/conftest.py tests/test_fd2ppv_parse.py
 git commit -m "feat(fd2ppv): 插件骨架——SDK 握手 + 配置 + 描述符"
 ```
 
@@ -585,7 +585,7 @@ git commit -m "feat(fd2ppv): 插件骨架——SDK 握手 + 配置 + 描述符"
 交付物：`_extract_work_fields(html) -> dict` 能从真实标记里取出全部字段，零第三方依赖。
 
 **文件：**
-- 修改：`esl1.fd2ppv/plugin.py`（在「站点常量」之后、`Fd2PpvProvider` 之前插入）
+- 修改：`unofficialscraper.fd2ppv/plugin.py`（在「站点常量」之后、`Fd2PpvProvider` 之前插入）
 - 测试：`tests/test_fd2ppv_parse.py`（追加）
 
 - [ ] **步骤 1：追加失败的测试**
@@ -730,7 +730,7 @@ def test_is_challenge_detects_cloudflare_page():
 
 - [ ] **步骤 3：实现纯函数**
 
-在 `esl1.fd2ppv/plugin.py` 的「站点常量」之后、`class Fd2PpvConfig` 之前，插入：
+在 `unofficialscraper.fd2ppv/plugin.py` 的「站点常量」之后、`class Fd2PpvConfig` 之前，插入：
 
 ```python
 # ---------- 纯函数：番号 / 日期 / 时长 / 图片 ----------
@@ -961,7 +961,7 @@ def _extract_work_fields(html: str) -> dict:
 - [ ] **步骤 5：Commit**
 
 ```bash
-git add esl1.fd2ppv/plugin.py tests/test_fd2ppv_parse.py
+git add unofficialscraper.fd2ppv/plugin.py tests/test_fd2ppv_parse.py
 git commit -m "feat(fd2ppv): 详情页纯解析（番号/标题/日期/时长/标签/女优/封面/剧照）"
 ```
 
@@ -972,7 +972,7 @@ git commit -m "feat(fd2ppv): 详情页纯解析（番号/标题/日期/时长/�
 交付物：解析结果按配置组装成 `MediaMetadata`，字段缺失不会崩。
 
 **文件：**
-- 修改：`esl1.fd2ppv/plugin.py`
+- 修改：`unofficialscraper.fd2ppv/plugin.py`
 - 测试：`tests/test_fd2ppv_parse.py`（追加）
 
 - [ ] **步骤 1：追加失败的测试**
@@ -1180,7 +1180,7 @@ def test_build_meta_sparse_page_does_not_crash(tmp_path):
 - [ ] **步骤 5：Commit**
 
 ```bash
-git add esl1.fd2ppv/plugin.py tests/test_fd2ppv_parse.py
+git add unofficialscraper.fd2ppv/plugin.py tests/test_fd2ppv_parse.py
 git commit -m "feat(fd2ppv): 解析结果按配置组装为 MediaMetadata"
 ```
 
@@ -1191,11 +1191,11 @@ git commit -m "feat(fd2ppv): 解析结果按配置组装为 MediaMetadata"
 交付物：撞 Cloudflare 时自动起本机浏览器，直接取回详情页 HTML，并缓存 `cf_clearance` 供后续 HTTP 复用。
 
 **文件：**
-- 修改：`esl1.fd2ppv/plugin.py`
+- 修改：`unofficialscraper.fd2ppv/plugin.py`
 
 - [ ] **步骤 1：把 CDP 浏览器块整段复制进来**
 
-把 `esl1.supfc2/plugin.py` 的 **1365–1929 行**（从 `# ====` 注释头到 `browser_fetch` 的 `return {...}` 结尾）**逐字复制**到 `esl1.fd2ppv/plugin.py` 文件**末尾**。
+把 `esl1.supfc2/plugin.py` 的 **1365–1929 行**（从 `# ====` 注释头到 `browser_fetch` 的 `return {...}` 结尾）**逐字复制**到 `unofficialscraper.fd2ppv/plugin.py` 文件**末尾**。
 
 ⚠️ 必须连它自带的 import 一起复制（`esl1.supfc2/plugin.py:1382-1389`）：
 
@@ -1478,14 +1478,14 @@ def test_fetch_miss_raises_when_report_misses(tmp_path):
 
 运行：
 ```bash
-/c/ProgramData/anaconda3/python.exe -c "import ast,pathlib; ast.parse(pathlib.Path('esl1.fd2ppv/plugin.py').read_text(encoding='utf-8')); print('AST OK')"
+/c/ProgramData/anaconda3/python.exe -c "import ast,pathlib; ast.parse(pathlib.Path('unofficialscraper.fd2ppv/plugin.py').read_text(encoding='utf-8')); print('AST OK')"
 ```
 预期：`AST OK`（复制来的 CDP 块若漏了 import，会在实机运行时才炸，所以这里先过一遍语法）。
 
 - [ ] **步骤 6：Commit**
 
 ```bash
-git add esl1.fd2ppv/plugin.py
+git add unofficialscraper.fd2ppv/plugin.py
 git commit -m "feat(fd2ppv): HTTP 优先 + CDP 浏览器过 Cloudflare 兜底"
 ```
 
@@ -1504,15 +1504,15 @@ git commit -m "feat(fd2ppv): HTTP 优先 + CDP 浏览器过 Cloudflare 兜底"
 在 `README.md` 表格中 `esl1.supfc2` 那行之后插入：
 
 ```markdown
-| `esl1.fd2ppv` | 0.1.0 | `fc2` | fd2ppv.cc | FC2 元数据，含剧照墙（`extrafanart`）。详情页在 Cloudflare 挑战后，撞挑战自动起浏览器兜底 |
+| `unofficialscraper.fd2ppv` | 0.1.0 | `fc2` | fd2ppv.cc | FC2 元数据，含剧照墙（`extrafanart`）。详情页在 Cloudflare 挑战后，撞挑战自动起浏览器兜底 |
 ```
 
 - [ ] **步骤 2：README「浏览器支持」补一句**
 
-在 `README.md` 的运行要求列表里，`esl1.fc2ppvdb` / `esl1.supfc2` / `esl1.supjav` 那条后面追加 `esl1.fd2ppv`：
+在 `README.md` 的运行要求列表里，`esl1.fc2ppvdb` / `esl1.supfc2` / `esl1.supjav` 那条后面追加 `unofficialscraper.fd2ppv`：
 
 ```markdown
-  - `esl1.fc2ppvdb` / `esl1.supfc2` / `esl1.supjav` / `esl1.fd2ppv`：需要 Chrome / Edge 内核浏览器，用于通过 Cloudflare 挑战（fd2ppv 直接用浏览器取回详情页）
+  - `esl1.fc2ppvdb` / `esl1.supfc2` / `esl1.supjav` / `unofficialscraper.fd2ppv`：需要 Chrome / Edge 内核浏览器，用于通过 Cloudflare 挑战（fd2ppv 直接用浏览器取回详情页）
 ```
 
 - [ ] **步骤 3：安装到 amane**
@@ -1520,10 +1520,10 @@ git commit -m "feat(fd2ppv): HTTP 优先 + CDP 浏览器过 Cloudflare 兜底"
 把插件目录复制进 amane 数据目录的 `plugins/sources/`：
 
 ```bash
-cp -r esl1.fd2ppv /c/Users/ZhaoG/AppData/Local/amane/plugins/sources/
+cp -r unofficialscraper.fd2ppv /c/Users/ZhaoG/AppData/Local/amane/plugins/sources/
 ```
 
-然后在 amane 界面里「重新扫描」插件，并到 **设置 → 刮削 → 内容路由** 把 `esl1.fd2ppv` 勾进 `fc2` 路由。
+然后在 amane 界面里「重新扫描」插件，并到 **设置 → 刮削 → 内容路由** 把 `unofficialscraper.fd2ppv` 勾进 `fc2` 路由。
 
 - [ ] **步骤 4：打开调试开关并实机刮削**
 
@@ -1539,8 +1539,8 @@ cp -r esl1.fd2ppv /c/Users/ZhaoG/AppData/Local/amane/plugins/sources/
 
 运行：
 ```bash
-tail -n 60 /c/Users/ZhaoG/AppData/Local/amane/plugins/sources/esl1.fd2ppv/debug/debug.log
-ls /c/Users/ZhaoG/AppData/Local/amane/plugins/sources/esl1.fd2ppv/debug/
+tail -n 60 /c/Users/ZhaoG/AppData/Local/amane/plugins/sources/unofficialscraper.fd2ppv/debug/debug.log
+ls /c/Users/ZhaoG/AppData/Local/amane/plugins/sources/unofficialscraper.fd2ppv/debug/
 ```
 预期：日志里有 `=== 开始 …`、`过挑战成功：cookies=[...] cf_clearance=有`、`组装完成: …`；`debug/` 下有 `4989610.html`、`chrome.log`。
 
@@ -1550,7 +1550,7 @@ ls /c/Users/ZhaoG/AppData/Local/amane/plugins/sources/esl1.fd2ppv/debug/
 
 ```bash
 git add README.md
-git commit -m "docs: README 收录 esl1.fd2ppv 插件"
+git commit -m "docs: README 收录 unofficialscraper.fd2ppv 插件"
 ```
 
 ---

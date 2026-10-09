@@ -1,4 +1,4 @@
-"""esl1.fd2ppv 的单元测试（只测纯逻辑；浏览器相关靠实机验证）。"""
+"""unofficialscraper.fd2ppv 的单元测试（只测纯逻辑；浏览器相关靠实机验证）。"""
 
 import asyncio
 
@@ -7,7 +7,7 @@ import pytest
 
 def test_descriptor_is_well_formed():
     desc = PLUGIN.Plugin.descriptor()
-    assert desc.id == "esl1.fd2ppv"
+    assert desc.id == "unofficialscraper.fd2ppv"
     assert desc.content_types == frozenset({"fc2"})
     assert "film_metadata" in desc.capabilities or PLUGIN.SourceCapability.FILM_METADATA in desc.capabilities
     assert "title" in desc.metadata_fields

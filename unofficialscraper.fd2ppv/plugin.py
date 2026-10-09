@@ -803,14 +803,14 @@ class Fd2PpvProvider(FilmSourceProvider):
 
 
 class Plugin(FilmSourcePlugin):
-    """放在 ``{数据目录}/plugins/sources/esl1.fd2ppv/`` 下的 plugin.py 必须导出此类。"""
+    """放在 ``{数据目录}/plugins/sources/unofficialscraper.fd2ppv/`` 下的 plugin.py 必须导出此类。"""
 
     config_model = Fd2PpvConfig
 
     @classmethod
     def descriptor(cls):
         return SourceDescriptor(
-            id="esl1.fd2ppv",
+            id="unofficialscraper.fd2ppv",
             name="fd2ppv.cc (FC2 元数据)",
             version="0.1.0",
             capabilities=frozenset({SourceCapability.FILM_METADATA}),

@@ -1,4 +1,4 @@
-"""把 amane 宿主 SDK 打桩，好让 esl1.fd2ppv/plugin.py 能在本地 pytest 里导入。
+"""把 amane 宿主 SDK 打桩，好让 unofficialscraper.fd2ppv/plugin.py 能在本地 pytest 里导入。
 
 插件在 amane 里跑时，SDK 由宿主注入；本地没有 amane，所以造一组最小替身，
 只为跑通纯解析逻辑的单元测试。真机行为仍以 amane 里的 debug.log 为准。
@@ -10,7 +10,7 @@ import types
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN_PATH = ROOT / "esl1.fd2ppv" / "plugin.py"
+PLUGIN_PATH = ROOT / "unofficialscraper.fd2ppv" / "plugin.py"
 
 
 def _install_amane_stubs() -> None:
